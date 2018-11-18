@@ -1,22 +1,24 @@
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++Global Definitions Begin++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//+++++++++++++++++++++++++++++++++++Global Definitions Begin+++++++++++++++++++++++++++++++++
 #include <SoftwareSerial.h>    
 #include "LedControl.h"
 #include <binary.h>     // Bibliothek einbinden, um Binärwerte ausschreiben zu können
 #include <LiquidCrystal.h>
 #include "pitches.h"
 
-LiquidCrystal lcdisplay(8, 9, 5, 4, 3, 2);    // LCD-Display für die Punktestandausgabe definieren
 const int pin_key = 7;    //Digitale Eingang für den Joystick- Schalter
-const int pin_x = 0;      //Analoger Eingang A0
-const int pin_y = 1;      //Analoger Eingang A1
+const int pin_x = 0;      //Analoger Eingang A0 --> x-Wert des Joysticks
+const int pin_y = 1;      //Analoger Eingang A1 --> y-Wert des Joysticks 
 
-LedControl lc = LedControl(12,10,11,4);       // Definition der Input-Pins ( DIN, CLK, CS )und Anzahl der MAX7219-Module. Da diese gebrückt werden, brauchen diese nur jeweils einen Anschluss am Arduino. 
-                                              // Über lc können nun die Funktionen der LED-Control Bibliothek abgerufen werden 
-                                              // Variable vom Typ LedControl, um die Funktionen der Bibliothek aufrufen zu können
+LiquidCrystal lcdisplay(8, 9, 5, 4, 3, 2);  //LCD-Display für die Punktestandausgabe definieren
+LedControl lc = LedControl(12,10,11,4);     //Definition der Input-Pins ( DIN, CLK, CS ), Anzahl der MAX7219-Module. 
+                                            //Da diese gebrückt werden, brauchen diese jeweils einen Anschluss am Arduino. 
+                                            //Über lc können nun die Funktionen der LED-Control Bibliothek abgerufen werden 
+                                            //Variable vom Typ LedControl, um die Funktionen der Bibliothek aufzurufen
  
 //Spielfeldgrößendefinition            
 #define  FIELD_WIDTH       8    //Konstante Feldbreite, Breite LED-Matrix MAX7219
-#define  FIELD_HEIGHT      24   //Konstante Feldhöhe, Spielfeld geht über die unteren 3 LED-Matrizen --> 8x3 = 24 LEDs / Reihen hoch
+#define  FIELD_HEIGHT      24   //Konstante Feldhöhe, Spielfeld geht über die unteren 3 LED-Matrizen 
+                                //--> 8x3 = 24 LEDs / Reihen hoch
 #define  ORIENTATION_HORIZONTAL 
 #define  NUM_PIXELS    FIELD_WIDTH*FIELD_HEIGHT   // Anzahl der Spielfeld-LEDs
 
@@ -25,7 +27,7 @@ LedControl lc = LedControl(12,10,11,4);       // Definition der Input-Pins ( DIN
 #define  DIR_DOWN  2
 #define  DIR_LEFT  3
 #define  DIR_RIGHT 4
-#define  DIR_PUSH  5  // Drücken des Joysticks als „Direction im Spiel( vielleicht Pausieren? )
+#define  DIR_PUSH  5  // Drücken des Joysticks als „Direction" im Spiel
 
 //Verfügbare Richtungen / Eingabemöglichkeiten des Joysticks
 #define  BTN_NONE  0
@@ -36,6 +38,12 @@ LedControl lc = LedControl(12,10,11,4);       // Definition der Input-Pins ( DIN
 #define  BTN_PUSH  5
 
 uint8_t curControl = BTN_NONE;
+uint16_t brickSpeed;                       //Variablendeklaration für Basisgrößen (Bausteingeschwindigkeit Runterfallen)
+uint8_t nbRowsThisLevel;                   //Reihen die in diesem Level bereits aufgelöst wurden 
+uint16_t nbRowsTotal;                      //aufgelöste Reihen
+boolean tetrisGameOver;                    //true, wenn das Spiel verloren wurde
+boolean tetrisRunning = false;              
+int punktestand = 0;                       //Variable mit aktuellem Punktestand 
 
 
 #define  MAX_BRICK_SIZE    4
@@ -45,37 +53,40 @@ uint8_t curControl = BTN_NONE;
 #define  SPEED_STEP        200      //Geschwindigkeitserhöhung pro Level 
 #define  LEVELUP           2        //Anzahl der Reihen für ein LVL-Up
 
-//Struktur für das Spielfeld
+//Struktur der Variable für das Spielfeld
  struct Field{
-    uint8_t pix[FIELD_WIDTH][FIELD_HEIGHT+1];//Make field one larger so that collision detection with bottom of field can be done in a uniform way
+    uint8_t pix[FIELD_WIDTH][FIELD_HEIGHT];     
  };
   
 //Globale Variable Spielfeld 
 Field field;
 
 
-int notenr = 0; 
-int tetrismelody[] = {
-  NOTE_E7,NOTE_B6,NOTE_C7,NOTE_D7,NOTE_C7,NOTE_B6,NOTE_A6,
-  NOTE_A6,NOTE_C7,NOTE_E7,NOTE_D7,NOTE_C7,NOTE_B6,
-  NOTE_C7,NOTE_D7,NOTE_E7,NOTE_C7,NOTE_A6,NOTE_A6,NOTE_A6,NOTE_B6,NOTE_C7,
-  NOTE_D7,NOTE_F7,NOTE_A7,NOTE_G7,NOTE_F7,NOTE_E7,
-  NOTE_C7,NOTE_E7,NOTE_D7,NOTE_C7,NOTE_B7,
-  NOTE_B7,NOTE_C7,NOTE_D7,NOTE_E7,NOTE_C7,NOTE_A6,NOTE_A6,NOTE_A6
+//Falls die Tetrismelodie zusätzlich abgespielt werden soll 
+//int notenr = 0; 
+//int tetrismelody[] = {
+//  NOTE_E7,NOTE_B6,NOTE_C7,NOTE_D7,NOTE_C7,NOTE_B6,NOTE_A6,
+//  NOTE_A6,NOTE_C7,NOTE_E7,NOTE_D7,NOTE_C7,NOTE_B6,
+//  NOTE_C7,NOTE_D7,NOTE_E7,NOTE_C7,NOTE_A6,NOTE_A6,NOTE_A6,NOTE_B6,NOTE_C7,
+//  NOTE_D7,NOTE_F7,NOTE_A7,NOTE_G7,NOTE_F7,NOTE_E7,
+//  NOTE_C7,NOTE_E7,NOTE_D7,NOTE_C7,NOTE_B7,
+//  NOTE_B7,NOTE_C7,NOTE_D7,NOTE_E7,NOTE_C7,NOTE_A6,NOTE_A6,NOTE_A6
+//};
+
+//int melodyduration[] = {
+//  4,8,8,4,8,8,4,
+//  8,8,4,8,8,4,
+//  8,4,4,4,4,8,8,8,8,
+//  4,8,4,8,8,4,
+//  8,4,8,8,4,
+//  8,8,4,4,4,4,4,2
+//};
+
+
+int fullsound []{               //Ton, der ausgegeben wird, wenn eine volle Reihe aufgelöst wird
+  NOTE_C6
 };
 
-int melody []{
-  NOTE_A6,NOTE_B6,NOTE_C7,NOTE_D7,NOTE_E7,NOTE_F7,NOTE_G7,NOTE_A7
-};
-
-int melodyduration[] = {
-  4,8,8,4,8,8,4,
-  8,8,4,8,8,4,
-  8,4,4,4,4,8,8,8,8,
-  4,8,4,8,8,4,
-  8,4,8,8,4,
-  8,8,4,4,4,4,4,2
-};
 
 
 //Structure to represent active brick on screen
@@ -87,20 +98,21 @@ struct Brick{
     uint8_t pix[MAX_BRICK_SIZE][MAX_BRICK_SIZE];
   };
 
-  //globale Vaiable, aktiver Baustein, versch. Funktionen müssen auf diesen zugreifen können, sodass dieser global definiert werden muss. 
+  //globale Vaiable, aktiver Baustein, versch. Funktionen müssen auf diesen zugreifen können. 
   Brick activeBrick;
   
   //Struct to contain the different choices of blocks
   struct AbstractBrick{      //Definition der Struktur der Bausteine (allgemeine Größen)
     int yOffset;             //Y-Offset den der Baustein hat, wenn er oben platziert wird
-    uint8_t siz;             //Größe des Bausteins, (Wichtig für die Rotation des Bausteins) abhängig davon wird es in einem anderen Punkt rotiert
+    uint8_t siz;             //Größe des Bausteins (Wichtig für die Rotation des Bausteins) 
+                             //abhängig davon wird es in einem anderen Punkt rotiert
     uint8_t pix[MAX_BRICK_SIZE][MAX_BRICK_SIZE];        //Definition des Bausteins
   };
 
-  //Brick "library"
-  AbstractBrick brickLib[7] = {   //die sieben tetrominos 
+  //Bausteinbibliothek
+  AbstractBrick brickLib[7] = {   //die sieben Tetrominos 
     {
-        1,//yoffset when adding brick to field
+        1,                        //y-offset, den die Bausteine haben, wenn sie ins Feld gesetzt werden
         4,
         { {0,0,0,0},
           {0,1,1,0},
@@ -164,11 +176,196 @@ struct Brick{
     }
   };
 
-void readInput(){     //Dieser Teil muss auf den Joystick angepasst werde
+
+//Buchstaben für Play / Lose Anzeige
+byte p[8] = {B00000000,B00000000,B01111111,B00001001,B00001001,B00001111,B00000000,B00000000};
+byte l[8] = {B00000000,B00000000,B01111111,B01000000,B01000000,B01000000,B00000000,B00000000};
+byte a[8] = {B00000000,B00000000,B01111111,B00001001,B00001001,B01111111,B00000000,B00000000};
+byte y[8] = {B00000000,B00000000,B01001111,B01001000,B01001000,B01111111,B00000000,B00000000};
+
+byte o[8] = {B00000000,B00000000,B01111111,B01000001,B01000001,B01111111,B00000000,B00000000};
+byte s[8] = {B00000000,B00000000,B01001111,B01001001,B01001001,B01111001,B00000000,B00000000};
+byte e[8] = {B00000000,B00000000,B01111111,B01001001,B01001001,B01000001,B00000000,B00000000};
+
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++Global Definitions End+++++++++++++++++++++++++++++++++++++++++++
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++Setup Start++++++++++++++++++++++++++++++++++++++++++++++++++++++
+void setup(){
+  Serial.begin(115200);
+  //Joystick-Taster als digitalen Eingang definieren, Pull-Up Widerstand des Joystick-Tasters aktivieren
+  pinMode(pin_key, INPUT);
+  digitalWrite(pin_key, HIGH);
+
+  for(int index=0;index<lc.getDeviceCount();index++) {
+      lc.shutdown(index,false);                                       //Power-Saving Modus aller LED-Matrizen beenden 
+                                                                      //(Hochfahren der Matrizen einleiten) 
+      lc.setIntensity(index, 2);                                      //Bildschirmhelligkeit einstellen, hier auf niedrig
+  }
+  
+  lcdisplay.begin(16, 2);                                             //Das LCD-Display definieren, 16 Zeichen in 2 Zeilen
+  lcdisplay.clear();                                                  //Display mit Punktestand löschen
+  lcdisplay.setCursor(0,0);                                           //in erste Zeile springen 
+  lcdisplay.print("Punktestand:");                                    //Überschrift auf LCD-Display schreiben
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++Setup End++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++Loop Start+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+void loop(){
+
+  tetrisanzeigePlay();
+  readInput();
+  if (curControl == BTN_PUSH){                                           //Das Spiel wird erst gestartet bzw. fortgesetzt, 
+                                                                         //wenn der Joystick-Schalter betätigt wurde 
+     runTetris();                                                        //Spiel wird ausgeführt
+     clearAllMatrix();                                                   //Spielfeld ablöschen    
+  }
+}
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++Loop End++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++Functions Start+++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+void tetrisanzeigePlay(){                             // Play-Anzeige (Startbild)  
+  lc.setRow(3,0,y[0]);
+  lc.setRow(3,1,y[1]);
+  lc.setRow(3,2,y[2]);
+  lc.setRow(3,3,y[3]);
+  lc.setRow(3,4,y[4]);
+  lc.setRow(3,5,y[5]);
+  lc.setRow(3,6,y[6]);
+  lc.setRow(3,7,y[7]);
+
+  lc.setRow(2,0,a[0]);
+  lc.setRow(2,1,a[1]);
+  lc.setRow(2,2,a[2]);
+  lc.setRow(2,3,a[3]);
+  lc.setRow(2,4,a[4]);
+  lc.setRow(2,5,a[5]);
+  lc.setRow(2,6,a[6]);
+  lc.setRow(2,7,a[7]);
+
+  lc.setRow(1,0,l[0]);
+  lc.setRow(1,1,l[1]);
+  lc.setRow(1,2,l[2]);
+  lc.setRow(1,3,l[3]);
+  lc.setRow(1,4,l[4]);
+  lc.setRow(1,5,l[5]);
+  lc.setRow(1,6,l[6]);
+  lc.setRow(1,7,l[7]);
+
+  lc.setRow(0,0,p[0]);
+  lc.setRow(0,1,p[1]);
+  lc.setRow(0,2,p[2]);
+  lc.setRow(0,3,p[3]);
+  lc.setRow(0,4,p[4]);
+  lc.setRow(0,5,p[5]);
+  lc.setRow(0,6,p[6]);
+  lc.setRow(0,7,p[7]);      
+}
+
+void tetrisanzeigeLose(){
+   //Lose anzeigen, wenn das Spiel verloren wurde 
+  lc.setRow(3,0,e[0]);
+  lc.setRow(3,1,e[1]);
+  lc.setRow(3,2,e[2]);
+  lc.setRow(3,3,e[3]);
+  lc.setRow(3,4,e[4]);
+  lc.setRow(3,5,e[5]);
+  lc.setRow(3,6,e[6]);
+  lc.setRow(3,7,e[7]);
+
+  lc.setRow(2,0,s[0]);
+  lc.setRow(2,1,s[1]);
+  lc.setRow(2,2,s[2]);
+  lc.setRow(2,3,s[3]);
+  lc.setRow(2,4,s[4]);
+  lc.setRow(2,5,s[5]);
+  lc.setRow(2,6,s[6]);
+  lc.setRow(2,7,s[7]);
+
+  lc.setRow(1,0,o[0]);
+  lc.setRow(1,1,o[1]);
+  lc.setRow(1,2,o[2]);
+  lc.setRow(1,3,o[3]);
+  lc.setRow(1,4,o[4]);
+  lc.setRow(1,5,o[5]);
+  lc.setRow(1,6,o[6]);
+  lc.setRow(1,7,o[7]);
+
+  lc.setRow(0,0,l[0]);
+  lc.setRow(0,1,l[1]);
+  lc.setRow(0,2,l[2]);
+  lc.setRow(0,3,l[3]);
+  lc.setRow(0,4,l[4]);
+  lc.setRow(0,5,l[5]);
+  lc.setRow(0,6,l[6]);
+  lc.setRow(0,7,l[7]);      
+}
+
+
+void clearAllMatrix(){
+  for (int n=0; n < lc.getDeviceCount(); n++){ 
+    lc.clearDisplay(n);
+  }
+}
+
+void runTetris(){   //vorher (void)
+  delay(100);                             //Verzögerung, um  Drückbefehl zu überbrücken, 
+  tetrisInit();                           //damit nicht als Pausierbefehl erkannt
+  unsigned long prevUpdateTime = 0;
+  tetrisRunning = true;
+  int nextupbrick = randombrick();        //nächsten Tetromino aus Bibliothek zufällig generieren
+  nextup_brick(nextupbrick);              //nächsten Tetromino in der obersten Matrix anzeigen
+  while(tetrisRunning){
+    unsigned long curTime;
+    do{
+      readInput();
+      if (curControl != BTN_NONE){
+        playerControlActiveBrick();
+        printField();
+      }
+      if (tetrisGameOver) {
+        clearAllMatrix();
+        clearField();                  //Spielfeld ablöschen, im nächsten Zyklus wird ein neues Spielfeld erzeugt   
+        tetrisanzeigeLose();
+        delay(3000);
+        break;
+      }
+        curTime = millis();
+    } 
+    while ((curTime - prevUpdateTime) < brickSpeed);  
+    prevUpdateTime = curTime;
+      if (tetrisGameOver){
+      punktestand = 0; 
+      lcdisplay.setCursor(0,1); 
+      lcdisplay.print(punktestand);
+      //Spielschleife verlassen, beim nächsten Mal wird ein neues Spiel gestartet
+      tetrisRunning = false;
+      break;
+      }
+    
+      //Solange der Baustein (kollisions-)"frei"  ist, wird er nach unten bewegt 
+      if (activeBrick.enabled){
+        shiftActiveBrick(DIR_DOWN);
+      } 
+      else {
+        //Aktiver Baustein wurde abgelegt, neuen Baustein generieren und im Spielfeld platzieren
+        checkFullLines();
+        newActiveBrick_in_game(nextupbrick);
+        prevUpdateTime = millis();                   //Update Time zurücksetzen
+        nextupbrick = randombrick();                 //nächsten Tetromino aus Bibliothek zufällig generieren
+        nextup_brick(nextupbrick);                   //nächsten Tetromino in der obersten Matrix anzeigen
+      }
+    printField();
+  }
+}
+
+void readInput(){     //auf den Joystick angepasst
   curControl = BTN_NONE;
   int direction_x = analogRead(pin_x);
-  int direction_y = analogRead(pin_y);        //hier wird kein Switch Case verwendet, um eine gewisse Sensibilität beim Richtungswechsel herzustellen 
-                                              //nach einer gewissen Anzahl an Schaltspielen, könnte es sein, dass der vom Joystick übergebene Analogwert sich in einer kleineren Spanne als 0-1023 befindet. 
+  int direction_y = analogRead(pin_y);    //hier wird kein Switch Case verwendet, für Sensibilität beim Richtungswechsel  
+                                          //nach einer gewissen Anzahl an Schaltspielen, könnte es sein,
+                                          // dass der vom Joystick übergebene Analogwert in einer kleineren Spanne
+                                          //als 0-1023 ist. 
   if (direction_x > 900){
     curControl = BTN_RIGHT;
   }
@@ -190,9 +387,11 @@ void readInput(){     //Dieser Teil muss auf den Joystick angepasst werde
   } 
 }
 
-int setwhichLedcol(int y){        // die Spalten des Spielfelds müssen auf die entsprechenden Matrizen umgeschrieben werden. Da diese nur jeweils Spaltenbezeichnungen von 0-7 zulassen, muss hier die aktive Reihe des Spielfeldes auf die entsprechened Spalte der
-  switch (y){                     // Matrix umgeschrieben werden. Durch den entsprechenden Aufbau des 4-er MAX7219-Aufbau, dienen die Spalten der MAX7219 als Reihen des Spielfelds und anders rum. 
-    case 0:
+int setwhichLedcol(int y){        //Die Spalten des Spielfelds müssen auf entsprechenden Matrizen umgeschrieben werden.
+                                  //Da diese nur jeweils Spaltenbezeichnungen von 0-7 zulassen, muss hier  aktive Reihe
+                                  //des Spielfeldes auf die entsprechened Spalte der Matrix umgeschrieben werden.
+  switch (y){                     //Durch den entsprechenden Aufbau des 4-er MAX7219-Aufbau
+    case 0:                       //dienen die Spalten der MAX7219 als Reihen des Spielfelds und anders rum. 
       return 7;
       break;   
 
@@ -291,209 +490,6 @@ int setwhichLedcol(int y){        // die Spalten des Spielfelds müssen auf die 
   }
 }
 
-uint16_t brickSpeed;                        //Variablendeklaration für Basisgrößen (Bausteingeschwindigkeit für das Runterfallen)
-uint8_t nbRowsThisLevel;                    // Reihen die in diesem Level bereits aufgelöst wurden 
-uint16_t nbRowsTotal;                       //aufgelöste Reihen
-boolean tetrisGameOver;
-boolean tetrisRunning = false;
-int punktestand = 0;
-
-//Tetrisanzeige 
-//byte t[8]={B00000000,B00000111,B00000010,B00000010,B00000010,B00000010,B00000000,B00000000};
-//byte et[8]={B00000000,B01101110,B01000100,B01100100,B01000100,B01100100,B00000000,B00000000};
-//byte ri[8]={B00000000,B11101110,B10100100,B11000100,B10100100,B10101110,B00000000,B00000000};
-//byte s[8]={B00000010,B11100101,B10000001,B11100010,B00100010,B11100000,B00000010,B00000000}; 
-
-//Buchstaben für Play / Lose Anzeige
-byte p[8] = {B00000000,B00000000,B01111111,B00001001,B00001001,B00001111,B00000000,B00000000};
-byte l[8] = {B00000000,B00000000,B01111111,B01000000,B01000000,B01000000,B00000000,B00000000};
-byte a[8] = {B00000000,B00000000,B01111111,B00001001,B00001001,B01111111,B00000000,B00000000};
-byte y[8] = {B00000000,B00000000,B01001111,B01001000,B01001000,B01111111,B00000000,B00000000};
-
-byte o[8] = {B00000000,B00000000,B01111111,B01000001,B01000001,B01111111,B00000000,B00000000};
-byte s[8] = {B00000000,B00000000,B01001111,B01001001,B01001001,B01111001,B00000000,B00000000};
-byte e[8] = {B00000000,B00000000,B01111111,B01001001,B01001001,B01000001,B00000000,B00000000};
-
-
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++Global Definitions End+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++Setup Start++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-void setup(){
-  Serial.begin(115200);
-  //Wait for serial port to connect
-  //bluetooth.begin(BLUETOOTH_SPEED);     //nicht benötigt
-  //Initialise display
-  pinMode(pin_key, INPUT);
-  digitalWrite(pin_key, HIGH);
-
-  for(int index=0;index<lc.getDeviceCount();index++) {
-      lc.shutdown(index,false);                                             //Power-Saving Modus aller LED-Matrizen beenden (Hochfahren der Matrizen einleiten) 
-      lc.setIntensity(index, 2);                                            //Bildschirmhelligkeit einstellen, hier auf niedrig
-  }
-  
-  //Init random number generator
-  //randomSeed(millis());
-
-  lcdisplay.begin(16, 2);                                                    //Das LCD-Display hat 16 Zeichen in 2 Zeilen
-  lcdisplay.clear();                                                         //Display mit Punktestand löschen
-  lcdisplay.setCursor(0,0);                                                  //in erste Zeile springen 
-  lcdisplay.print("Punktestand:");                                           //Überschrift auf LCD-Display schreiben
-}
-
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++Setup End++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++Loop Start++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-void loop(){
-
-  tetrisanzeigePlay();
-  readInput();
-  if (curControl == BTN_PUSH){                                                //Das Spiel wird erst gestartet bzw. fortgesetzt, wenn der Joystick-Schalter betätigt wurde 
-     runTetris();                                                             //Spiel wird ausgeführt
-     clearAllMatrix();                                                        //Spielfeld ablöschen    
-  }
-}
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++Loop End++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++Functions Start++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-
-void tetrisanzeigePlay(){                             // Play-Anzeige (Startbild)  
-  lc.setRow(3,0,y[0]);
-  lc.setRow(3,1,y[1]);
-  lc.setRow(3,2,y[2]);
-  lc.setRow(3,3,y[3]);
-  lc.setRow(3,4,y[4]);
-  lc.setRow(3,5,y[5]);
-  lc.setRow(3,6,y[6]);
-  lc.setRow(3,7,y[7]);
-
-  lc.setRow(2,0,a[0]);
-  lc.setRow(2,1,a[1]);
-  lc.setRow(2,2,a[2]);
-  lc.setRow(2,3,a[3]);
-  lc.setRow(2,4,a[4]);
-  lc.setRow(2,5,a[5]);
-  lc.setRow(2,6,a[6]);
-  lc.setRow(2,7,a[7]);
-
-  lc.setRow(1,0,l[0]);
-  lc.setRow(1,1,l[1]);
-  lc.setRow(1,2,l[2]);
-  lc.setRow(1,3,l[3]);
-  lc.setRow(1,4,l[4]);
-  lc.setRow(1,5,l[5]);
-  lc.setRow(1,6,l[6]);
-  lc.setRow(1,7,l[7]);
-
-  lc.setRow(0,0,p[0]);
-  lc.setRow(0,1,p[1]);
-  lc.setRow(0,2,p[2]);
-  lc.setRow(0,3,p[3]);
-  lc.setRow(0,4,p[4]);
-  lc.setRow(0,5,p[5]);
-  lc.setRow(0,6,p[6]);
-  lc.setRow(0,7,p[7]);      
-}
-
-void tetrisanzeigeLose(){
-   //Lose anzeigen, wenn das Spiel verloren wurde 
-  lc.setRow(3,0,e[0]);
-  lc.setRow(3,1,e[1]);
-  lc.setRow(3,2,e[2]);
-  lc.setRow(3,3,e[3]);
-  lc.setRow(3,4,e[4]);
-  lc.setRow(3,5,e[5]);
-  lc.setRow(3,6,e[6]);
-  lc.setRow(3,7,e[7]);
-
-  lc.setRow(2,0,s[0]);
-  lc.setRow(2,1,s[1]);
-  lc.setRow(2,2,s[2]);
-  lc.setRow(2,3,s[3]);
-  lc.setRow(2,4,s[4]);
-  lc.setRow(2,5,s[5]);
-  lc.setRow(2,6,s[6]);
-  lc.setRow(2,7,s[7]);
-
-  lc.setRow(1,0,o[0]);
-  lc.setRow(1,1,o[1]);
-  lc.setRow(1,2,o[2]);
-  lc.setRow(1,3,o[3]);
-  lc.setRow(1,4,o[4]);
-  lc.setRow(1,5,o[5]);
-  lc.setRow(1,6,o[6]);
-  lc.setRow(1,7,o[7]);
-
-  lc.setRow(0,0,l[0]);
-  lc.setRow(0,1,l[1]);
-  lc.setRow(0,2,l[2]);
-  lc.setRow(0,3,l[3]);
-  lc.setRow(0,4,l[4]);
-  lc.setRow(0,5,l[5]);
-  lc.setRow(0,6,l[6]);
-  lc.setRow(0,7,l[7]);      
-}
-
-
-void clearAllMatrix(){
-  for (int n=0; n < lc.getDeviceCount(); n++){ 
-    lc.clearDisplay(n);
-  }
-}
-
-void runTetris(){   //vorher (void)
-  delay(100);                                   //Verzögerung, um den Drückbefehl zu überbrücken, damit dieser nicht als Pausierbefehl erkannt wird.
-  tetrisInit();
-  unsigned long prevUpdateTime = 0;
-  tetrisRunning = true;
-  int nextupbrick = randombrick();        //nächsten Tetromino aus Bibliothek zufällig generieren
-  nextup_brick(nextupbrick);              //nächsten Tetromino in der obersten Matrix anzeigen
-  while(tetrisRunning){
-    unsigned long curTime;
-    do{
-      readInput();
-      if (curControl != BTN_NONE){
-        playerControlActiveBrick();
-        printField();
-      }
-      if (tetrisGameOver) {
-        clearAllMatrix();
-        clearField();                  //Spielfeld ablöschen, damit im nächsten Zyklus ein neues Spielfeld erzeugt werden kann!      
-        tetrisanzeigeLose();
-        delay(3000);
-        break;
-      }
-        curTime = millis();
-    } 
-    while ((curTime - prevUpdateTime) < brickSpeed);  //Once enough time  has passed, proceed. The lower this number, the faster the game is
-    prevUpdateTime = curTime;
-      if (tetrisGameOver){
-      char buf[4];
-      int len = sprintf(buf, "%i", nbRowsTotal);
-      punktestand = 0; 
-      lcdisplay.setCursor(0,1); 
-      lcdisplay.print(punktestand);
-      //Spielschleife verlassen, beim nächsten Mal wird ein neues Spiel gestartet
-      tetrisRunning = false;
-
-      break;
-    }
-    
-    //Solange der Baustein (kollisions-)"frei"  ist, wird er nach unten bewegt 
-    if (activeBrick.enabled){
-      shiftActiveBrick(DIR_DOWN);
-    } 
-    else {
-      //Active brick has "crashed", check for full lines
-      //and create new brick at top of field
-      checkFullLines();
-      newActiveBrick_in_game(nextupbrick);
-      prevUpdateTime = millis();                             //Reset update time to avoid brick dropping two spaces
-      nextupbrick = randombrick();                           //nächsten Tetromino aus Bibliothek zufällig generieren
-      nextup_brick(nextupbrick);                             //nächsten Tetromino in der obersten Matrix anzeigen
-    }
-    printField();
-  }
-}
-
-
 
 void checkFullLines(){
   int x,y;
@@ -509,13 +505,13 @@ void checkFullLines(){
         field.pix[x][y] = 0;
         printField();
         delay(10);
-        tone(13, melody[7], 125);
+        tone(13, fullsound[0], 125);
       }
-      punktestand = punktestand + 50;                             //Punktestand für jede aufgelöste Reihe um 50 hochzählen
-      lcdisplay.setCursor(0,1);                                   //Cursor in 2. Zeile
-      lcdisplay.print(punktestand);                               //neuen Punktestand schreiben
+      punktestand = punktestand + 50;                       //Punktestand für jede aufgelöste Reihe um 50 hochzählen
+      lcdisplay.setCursor(0,1);                             //Cursor in 2. Zeile
+      lcdisplay.print(punktestand);                         //neuen Punktestand schreiben
       
-      moveFieldDownOne(y);                                        //restliche Blöcke eins nach unten verschieben
+      moveFieldDownOne(y);                                  //restliche Blöcke eins nach unten verschieben
       y++; minY++;
       printField();
       delay(50);
@@ -539,7 +535,7 @@ void clearField(){
     }
   }
   for (x=0;x<FIELD_WIDTH;x++){               
-    field.pix[x][FIELD_HEIGHT] = 1;
+    field.pix[x][FIELD_HEIGHT] = 0;
   }
 }
 
@@ -557,22 +553,22 @@ void clearnextup(){                                 //oberste Matrix mit Bauteil
 
 int setwhichLedadr(int y){ //je nach Y-Position der Bausteine, muss eine andere Matrix leuchten                             
   if (y <= 7){
-    return 1;                                       //Matrix 1 leuchtet (2. von oben)
+    return 1;                                 //Matrix 1 leuchtet (2. von oben)
   }
   else if (y > 7 && y < 16){                    
-    return 2;                                   //Matrix 2 leuchtet (2. von unten)
+    return 2;                                 //Matrix 2 leuchtet (2. von unten)
   }
   else{
-    return 3;                                   //Matrix 3 leuchtet (unterste)
+    return 3;                                 //Matrix 3 leuchtet (unterste)
   }
 }
 
-void printField(){                                    //das Spielfeld wird hier ausgegeben
+void printField(){                            //das Spielfeld wird hier ausgegeben
 int x,y;
   for (x=0;x<FIELD_WIDTH;x++){
     for (y=0;y<FIELD_HEIGHT;y++){
       uint8_t activeBrickPix = 0;
-      if (activeBrick.enabled){                          //der Tetromino wird nur angezeigt wenn dieser aktiv ist, also noch nicht abgelegt wurde
+      if (activeBrick.enabled){//der Tetromino wird nur angezeigt wenn dieser aktiv ist, also noch nicht abgelegt wurde
         
         //Ist die Position des Bausteins innerhalb der Spielfeldgrenzen, wird dieser angezeigt
         if ((x>=activeBrick.xpos) && (x<(activeBrick.xpos+(activeBrick.siz)))
@@ -606,19 +602,22 @@ void shiftActiveBrick(int dir){
   }
   
   //Anschließend muss geprüft werden, ob die neue Position gültig ist (Kollisionscheck):
-  //Wenn der Baustein an den seitlichen bzw. der unteren Spielfeldgrenze ist und ein rechts/links-Befehl kommt, ist die if-Bedingung erfüllt
+  //Wenn der Baustein an den seitlichen bzw. der unteren Spielfeldgrenze ist und ein rechts/links-Befehl kommt,
+  //ist die if-Bedingung erfüllt.
   //Wenn der Baustein auf einen anderen fixierten Baustein trifft, ist die if-Beingung ebenfalls erfüllt
   //ansonsten kann dieser weiterhin bewegt werden.
   if ((checkSidesCollision(&activeBrick)) || (checkFieldCollision(&activeBrick))){
     //Serial.println("coll");
     if (dir == DIR_LEFT){
-      activeBrick.xpos++;                           //gehe zurück an vorherige Position, da vorher die xpos um 1 dekrementiert wurde, wird sie hier um 1 inkrementiert, um die vorherige Position zu erhalten.
+      activeBrick.xpos++;             //gehe zurück an vorherige Position, da vorher die xpos um 1 dekrementiert wurde, 
+                                      //wird sie hier um 1 inkrementiert, um die vorherige Position zu erhalten.
     } else if (dir == DIR_RIGHT){
-      activeBrick.xpos--;                           //gehe zurück an vorherige Position, da vorher die xpos um 1 inkrementiert wurde, wird sie hier um 1 dekrementiert, um die vorherige Position zu erhalten.
+      activeBrick.xpos--;             //gehe zurück an vorherige Position, da vorher die xpos um 1 inkrementiert wurde,
+                                      //wird sie hier um 1 dekrementiert, um die vorherige Position zu erhalten.
     } else if (dir == DIR_DOWN){
-      activeBrick.ypos--;                           //gehe wieder eins hoch
+      activeBrick.ypos--;             //gehe wieder eins hoch
       addActiveBrickToField();
-      activeBrick.enabled = false;                  //Aktiver Baustein wird deaktiviert, kann nicht mehr bewegt werden  
+      activeBrick.enabled = false;    //Aktiver Baustein wird deaktiviert, kann nicht mehr bewegt werden  
     }
   }
 }
@@ -686,7 +685,7 @@ void rotateActiveBrick(){
   if ((!checkSidesCollision(&tmpBrick)) && (!checkFieldCollision(&tmpBrick))){                                      
     for (y=0;y<MAX_BRICK_SIZE;y++){
       for (x=0;x<MAX_BRICK_SIZE;x++){
-        activeBrick.pix[x][y] = tmpBrick.pix[x][y];                                                         //Rotation wird ausgeführt
+        activeBrick.pix[x][y] = tmpBrick.pix[x][y];  //Rotation wird ausgeführt
       }
     }
   }
@@ -696,50 +695,50 @@ void rotateActiveBrick(){
 void playerControlActiveBrick(){
   switch(curControl){
     case BTN_LEFT:      
-      shiftActiveBrick(DIR_LEFT);                         //der Baustein wird nach links bewegt
+      shiftActiveBrick(DIR_LEFT);      //der Baustein wird nach links bewegt
       break;
    case BTN_RIGHT:
-      shiftActiveBrick(DIR_RIGHT);                        //der Baustein wird nach RECHTS bewegt
+      shiftActiveBrick(DIR_RIGHT);     //der Baustein wird nach RECHTS bewegt
       break;
     case BTN_DOWN:
-      shiftActiveBrick(DIR_DOWN);                         //der Baustein wird nach unten beschleunigt 
+      shiftActiveBrick(DIR_DOWN);      //der Baustein wird nach unten beschleunigt 
       break;
     case BTN_UP:
-      rotateActiveBrick();                                //der Baustein wird gedreht
+      rotateActiveBrick();             //der Baustein wird gedreht
       break;
     case BTN_PUSH:
-      tetrisRunning = false;                              //das Spiel wird pausiert, der nächste Baustein wird jedoch zufällig generiert 
+      tetrisRunning = false;           //das Spiel wird pausiert, der nächste Baustein wird jedoch zufällig generiert 
       break;
   }
 }
 
 
-void newActiveBrick(){                                  //ein neuer Tetromino wird zufällig aus den 7 Bausteinen in der oben definierten Brick-Library ausgewählt und dem Aktiven Tetromino zugewiesen. 
+void newActiveBrick(){ //ein neuer Tetromino wird zufällig aus den 7 Bausteinen in der oben definierten Brick-Library 
+                       //ausgewählt und dem Aktiven Tetromino zugewiesen. 
   uint8_t selectedBrick = random(7);
   int num = selectedBrick;
 
- // der Neue Brick wird nach Parametern der Bibliothek angepasst
+ // der neue Baustein wird nach Parametern der Bibliothek angepasst
   activeBrick.siz = brickLib[selectedBrick].siz;
   activeBrick.yOffset = brickLib[selectedBrick].yOffset;
   activeBrick.xpos = FIELD_WIDTH/2 - activeBrick.siz/2;
   activeBrick.ypos = BRICKOFFSET-activeBrick.yOffset;
   activeBrick.enabled = true;
 
-  //Copy pix array of selected Brick
   uint8_t x,y;
   for (y=0;y<MAX_BRICK_SIZE;y++){
     for (x=0;x<MAX_BRICK_SIZE;x++){
       activeBrick.pix[x][y] = (brickLib[selectedBrick]).pix[x][y];
     }
   }
-  //Check collision, if already, then game is over
+  //Kollisionprüfung, wenn bereits wahr --> Game Over
   if (checkFieldCollision(&activeBrick)){
     tetrisGameOver = true;
   }
 }
 
 void tetrisInit(){
-  clearAllplayingMatrix();   //Leds ablöschen 
+  clearAllplayingMatrix();   //Leds ablöschen, damit nach einem Game Over wieder weiter gespielt werden kann 
   brickSpeed = INIT_SPEED;
   nbRowsThisLevel = 0;
   nbRowsTotal = 0;
@@ -757,6 +756,7 @@ int randombrick(){
 void nextup_brick(int numbrick){
   //Vorschau für den nächsten Tetromino, der kommt, anzeigen
   clearnextup();
+  //Rahmen an der obersten Matrix bilden 
   lc.setColumn(0,0,B11111111);
   lc.setColumn(0,7,B11111111);
   lc.setRow(0,0,B11111111);
@@ -889,8 +889,8 @@ void addActiveBrickToField(){
     for (bx=0;bx<MAX_BRICK_SIZE;bx++){
       fx = activeBrick.xpos + bx;
       fy = activeBrick.ypos + by;
-      
-      if (fx>=0 && fy>=0 && fx<FIELD_WIDTH && fy<FIELD_HEIGHT && activeBrick.pix[bx][by]){          //Baustein ist innerhalb des Feldes 
+      //Baustein ist innerhalb des Feldes
+      if (fx>=0 && fy>=0 && fx<FIELD_WIDTH && fy<FIELD_HEIGHT && activeBrick.pix[bx][by]){  
         field.pix[fx][fy] = field.pix[fx][fy] || activeBrick.pix[bx][by];
         field.pix[fx][fy] = activeBrick.pix[bx][by];
       }
